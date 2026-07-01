@@ -8,12 +8,25 @@ function esc(s) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
+
+// Only these URL schemes (plus scheme-relative/relative/anchor links) are safe to put in
+// an href — blocks javascript:/data:/vbscript: URIs that a model could be prompted (via
+// injected search-result text or a crafted user message) into emitting as a markdown
+// link. Assistant output renders as raw HTML, including in the public share-link viewer,
+// so this can't rely on the model "just not doing that."
+const SAFE_URL_RE = /^(https?:|mailto:|tel:|\/|#|\.\/|\.\.\/)/i
 
 function inline(text) {
   let s = esc(text)
   // Links first so bold/italic don't mangle URLs: [label](url)
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" style="color:var(--accent,#3b82f6);text-decoration:underline">$1</a>')
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (whole, label, url) => {
+    const decoded = url.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+    if (!SAFE_URL_RE.test(decoded)) return whole
+    return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color:var(--accent,#3b82f6);text-decoration:underline">${label}</a>`
+  })
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
   s = s.replace(/\*(.+?)\*/g, '<em>$1</em>')
   s = s.replace(/`([^`]+?)`/g, '<code style="background:rgba(128,128,128,.18);padding:1px 4px;border-radius:3px;font-size:0.85em">$1</code>')

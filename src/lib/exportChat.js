@@ -14,7 +14,15 @@ function escapeHtml(s) {
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
+
+// Same allowlist as lib/renderMarkdown.js — blocks javascript:/data: URIs a model could
+// be prompted into emitting as a markdown link. The PDF export opens a same-origin
+// window via document.write, so a clickable javascript: link here could reach
+// window.opener, not just the export window itself.
+const SAFE_URL_RE = /^(https?:|mailto:|tel:|\/|#|\.\/|\.\.\/)/i
 
 function isTableSeparator(line) {
   return /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(line)
@@ -95,7 +103,11 @@ function mdToHtml(text) {
 
 function formatInline(text) {
   let s = escapeHtml(text)
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" style="color:#2563eb">$1</a>')
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (whole, label, url) => {
+    const decoded = url.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&')
+    if (!SAFE_URL_RE.test(decoded)) return whole
+    return `<a href="${url}" style="color:#2563eb">${label}</a>`
+  })
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
   s = s.replace(/\*(.+?)\*/g, '<em>$1</em>')
   s = s.replace(/`(.+?)`/g, '<code style="background:#f3f4f6;padding:1px 4px;border-radius:3px;font-size:13px">$1</code>')
