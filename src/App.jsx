@@ -1565,7 +1565,7 @@ export default function App() {
                     {isPro ? (
                       <>
                         <p className="text-xs text-[var(--muted)] mt-1">
-                          Pro — {dailyMessageLimit(true)} messages/day.
+                          Pro — a much higher daily limit, plus priority during busy periods.
                         </p>
                         <button
                           onClick={doManageBilling}
@@ -1578,7 +1578,7 @@ export default function App() {
                     ) : (
                       <>
                         <p className="text-xs text-[var(--muted)] mt-1">
-                          Free — {dailyMessageLimit(false)} messages/day. Upgrade for {dailyMessageLimit(true)}/day.
+                          Free — {dailyMessageLimit(false)} messages/day. Upgrade for a much higher limit.
                         </p>
                         <button
                           onClick={doUpgrade}

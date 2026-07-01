@@ -9,10 +9,10 @@ export const IMAGE_DAILY_SOFT_LIMIT = 25
 export const CHAT_DAILY_SOFT_LIMIT = 400
 
 // ---- Free vs Pro tiers ----
-// The $5/mo Pro plan (Phase 2, Stripe) lifts the daily message cap. Until billing
-// ships, isPro() is always false and every user is on the free tier. Keep the free
-// limit generous so the cap is a gentle nudge, not a wall, during the traffic-growth
-// phase. When Stripe lands, isPro reads the user's subscription row.
+// The $5/mo Pro plan lifts the daily message cap. Both numbers are internal safety
+// ceilings, not a capacity guarantee: the backend is one shared Ollama Cloud free-tier
+// key across every visitor, GPU-time-quota'd (not request-count-quota'd), so don't
+// surface PRO_DAILY_MESSAGE_LIMIT verbatim in UI copy — say "higher limit" instead.
 export const FREE_DAILY_MESSAGE_LIMIT = 50
 export const PRO_DAILY_MESSAGE_LIMIT = 2000
 
