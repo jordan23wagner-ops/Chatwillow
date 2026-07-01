@@ -7,10 +7,9 @@ import {
   loadConversations, saveConversations, loadActiveId, saveActiveId,
   newConversation, titleFromMessages,
 } from './lib/conversations'
-import { cacheKey, getCached, setCached, looksLikeImageRequest } from './lib/cache'
 import { loadUsage, bumpUsage, IMAGE_DAILY_SOFT_LIMIT, overMessageLimit, dailyMessageLimit, contextUsageRatio } from './lib/usage'
 import { exportWord, exportPdf, exportReplyWord, exportReplyPdf } from './lib/exportChat'
-import { Download, Globe, Mic, FileUp, Volume2, Square, Loader2, Copy, Check, RefreshCw, Pencil, Search } from 'lucide-react'
+import { Download, Mic, FileUp, Volume2, Square, Loader2, Copy, Check, RefreshCw, Pencil, Search } from 'lucide-react'
 import renderMarkdown from './lib/renderMarkdown'
 import { parseDocument, isSupportedDocument } from './lib/parseDocument'
 import { THEMES, isDarkTheme } from './lib/themes'
@@ -73,14 +72,6 @@ export default function App() {
   const MAX_IMAGES = 4
   const [error, setError] = useState(null)
   const [lastAttempt, setLastAttempt] = useState(null)
-  // 'off' never searches, 'on' always searches first, 'auto' hands the model a
-  // web_search tool and lets it decide (smart routing, same idea as the model picker).
-  const [webSearch, setWebSearch] = useState(() => {
-    const stored = localStorage.getItem('webSearch')
-    if (stored === 'true') return 'on'
-    if (stored === 'false') return 'off'
-    return stored === 'on' || stored === 'off' || stored === 'auto' ? stored : 'auto'
-  })
   const [listening, setListening] = useState(false)
   const [doc, setDoc] = useState(null)          // { name, text, chars, truncated }
   const [docLoading, setDocLoading] = useState(false)
@@ -305,13 +296,6 @@ export default function App() {
     const userMessage = { id: Date.now(), role: 'user', content: text }
     const history = messages
     setMessages((prev) => [...prev, userMessage])
-    if (webSearch === 'off' && !looksLikeImageRequest(text)) {
-      const cached = getCached(cacheKey(model, history, text))
-      if (cached) {
-        setMessages((prev) => [...prev, { id: Date.now() + 1, role: 'assistant', content: cached, cached: true }])
-        return
-      }
-    }
     await sendToModel(history, { text, images: [], document: null })
   }
 
@@ -339,7 +323,6 @@ export default function App() {
       if (s.memory_enabled != null) setMemoryEnabled(s.memory_enabled)
     })
   }, [signedIn]) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { localStorage.setItem('webSearch', webSearch) }, [webSearch])
 
   // Voice input via the Web Speech API. Live interim transcript fills the input;
   // tapping the mic again (or the API ending) stops it.
@@ -609,7 +592,7 @@ export default function App() {
           images: payload.images,
           document: outgoingDoc,
           model: model,
-          webSearch: webSearch,
+          webSearch: 'auto',
           style: style,
           memory: memForTurn,
           customInstructions: customInstructions,
@@ -681,11 +664,6 @@ export default function App() {
         }
         // Usage: one chat request, plus an image if one was generated.
         setUsage(bumpUsage({ chat: 1, image: producedImage ? 1 : 0 }))
-        // Cache plain text answers so identical prompts return instantly next time.
-        // Never cache web-search answers — they're time-sensitive.
-        if (!producedImage && !(payload.images && payload.images.length) && webSearch === 'off' && streamedText.trim()) {
-          setCached(cacheKey(model, history, payload.text), streamedText)
-        }
       }
     } catch (err) {
       // User pressed Stop: keep whatever streamed, no error.
@@ -818,18 +796,6 @@ export default function App() {
     if (memoryEnabled && memoryAvailable) {
       const rem = text.match(/^\s*remember\s+(?:that\s+|this\s*[:,]?\s+|[:,]\s*)?(.+)/i)
       if (rem && rem[1]) storeMemory(rem[1].trim(), { source: 'manual' })
-    }
-
-    // Cache hit: serve an identical text-only, non-image, non-doc prompt instantly.
-    if (!images.length && !doc && webSearch === 'off' && !looksLikeImageRequest(text)) {
-      const cached = getCached(cacheKey(model, history, text))
-      if (cached) {
-        setMessages((prev) => [
-          ...prev,
-          { id: Date.now() + 1, role: 'assistant', content: cached, cached: true },
-        ])
-        return
-      }
     }
 
     await sendToModel(history, payload)
@@ -1348,9 +1314,9 @@ export default function App() {
             </span>
             <span
               className={chatLimitHit ? 'text-red-500 font-medium' : ''}
-              title="Messages sent today vs. your plan's daily limit"
+              title={isPro ? 'Messages sent today (Pro)' : "Messages sent today vs. today's free-plan limit"}
             >
-              Chat: {usage.chat}/{dailyMessageLimit(isPro)}
+              Chat: {isPro ? usage.chat : `${usage.chat}/${dailyMessageLimit(isPro)}`}
             </span>
             <span
               className={imageLimitHit ? 'text-red-500 font-medium' : ''}
@@ -1358,27 +1324,6 @@ export default function App() {
             >
               Images: {usage.image}/{IMAGE_DAILY_SOFT_LIMIT}
             </span>
-          </div>
-          {/* Web search mode: cycles off -> auto -> on -> off */}
-          <div className="mb-2 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setWebSearch((v) => (v === 'off' ? 'auto' : v === 'auto' ? 'on' : 'off'))}
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
-                webSearch === 'off'
-                  ? 'bg-[var(--surface-2)] text-[var(--muted)] border-[var(--border)]'
-                  : 'bg-[var(--accent)] text-[var(--accent-text)] border-[var(--accent)]'
-              }`}
-              title={
-                webSearch === 'auto'
-                  ? 'Smart routing: the model searches the web only when it needs to'
-                  : webSearch === 'on'
-                  ? 'Always search the web before answering'
-                  : 'Never search the web'
-              }
-            >
-              <Globe size={13} /> Web search: {webSearch === 'auto' ? 'Auto' : webSearch === 'on' ? 'Always' : 'Off'}
-            </button>
           </div>
           <form onSubmit={handleSubmit} className="flex gap-1.5">
             <input
