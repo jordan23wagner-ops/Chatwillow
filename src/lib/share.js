@@ -29,6 +29,7 @@ function slimMessages(messages) {
         out.image = m.image // hosted (non-data) URL is safe to keep
       }
       if (m.docName) out.docName = m.docName
+      if (m.sources && m.sources.length) out.sources = m.sources
       return out
     })
 }

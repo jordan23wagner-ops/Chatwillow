@@ -19,7 +19,15 @@ function esc(s) {
 // so this can't rely on the model "just not doing that."
 const SAFE_URL_RE = /^(https?:|mailto:|tel:|\/|#|\.\/|\.\.\/)/i
 
-function inline(text) {
+// Style for an inline citation badge — a small rounded pill, Perplexity-style, so a
+// citation reads as a distinct clickable chip rather than plain bracketed text.
+const CITATION_STYLE =
+  'display:inline-flex;align-items:center;justify-content:center;min-width:15px;height:15px;' +
+  'padding:0 4px;margin:0 1px;border-radius:7px;background:var(--surface-2,#e5e7eb);' +
+  'color:var(--accent,#3b82f6);font-size:0.68em;font-weight:700;text-decoration:none;' +
+  'vertical-align:super;line-height:15px'
+
+function inline(text, sources) {
   let s = esc(text)
   // Links first so bold/italic don't mangle URLs: [label](url)
   s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (whole, label, url) => {
@@ -27,6 +35,18 @@ function inline(text) {
     if (!SAFE_URL_RE.test(decoded)) return whole
     return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color:var(--accent,#3b82f6);text-decoration:underline">${label}</a>`
   })
+  // Bare [n] citation markers (from web-search grounding) become clickable badges
+  // linking straight to the matching source, instead of plain bracketed text.
+  if (sources && sources.length) {
+    s = s.replace(/\[(\d+)\]/g, (whole, numStr) => {
+      const src = sources[parseInt(numStr, 10) - 1]
+      if (!src || !src.url) return whole
+      const url = esc(src.url)
+      if (!SAFE_URL_RE.test(src.url)) return whole
+      const title = esc(src.title || src.url)
+      return `<a href="${url}" target="_blank" rel="noopener noreferrer" style="${CITATION_STYLE}" title="${title}">${numStr}</a>`
+    })
+  }
   s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
   s = s.replace(/\*(.+?)\*/g, '<em>$1</em>')
   s = s.replace(/`([^`]+?)`/g, '<code style="background:rgba(128,128,128,.18);padding:1px 4px;border-radius:3px;font-size:0.85em">$1</code>')
@@ -45,10 +65,10 @@ function splitRow(line) {
   return s.split('|').map((c) => c.trim())
 }
 
-function renderTable(header, rows) {
-  const th = header.map((c) => `<th style="border:1px solid var(--border,#d1d5db);padding:5px 9px;text-align:left;font-weight:600;background:rgba(128,128,128,.1)">${inline(c)}</th>`).join('')
+function renderTable(header, rows, sources) {
+  const th = header.map((c) => `<th style="border:1px solid var(--border,#d1d5db);padding:5px 9px;text-align:left;font-weight:600;background:rgba(128,128,128,.1)">${inline(c, sources)}</th>`).join('')
   const body = rows
-    .map((r) => '<tr>' + header.map((_, i) => `<td style="border:1px solid var(--border,#d1d5db);padding:5px 9px;vertical-align:top">${inline(r[i] || '')}</td>`).join('') + '</tr>')
+    .map((r) => '<tr>' + header.map((_, i) => `<td style="border:1px solid var(--border,#d1d5db);padding:5px 9px;vertical-align:top">${inline(r[i] || '', sources)}</td>`).join('') + '</tr>')
     .join('')
   return (
     `<div style="overflow-x:auto;margin:8px 0;-webkit-overflow-scrolling:touch">` +
@@ -57,7 +77,7 @@ function renderTable(header, rows) {
   )
 }
 
-export default function renderMarkdown(text) {
+export default function renderMarkdown(text, sources) {
   const lines = String(text || '').split('\n')
   const out = []
   let i = 0
@@ -92,30 +112,30 @@ export default function renderMarkdown(text) {
       i += 2
       const rows = []
       while (i < lines.length && lines[i].includes('|') && lines[i].trim()) { rows.push(splitRow(lines[i])); i++ }
-      out.push(renderTable(header, rows))
+      out.push(renderTable(header, rows, sources))
       continue
     }
 
     // Headings
     const h3 = line.match(/^###\s+(.+)/)
-    if (h3) { closeList(); out.push(`<div style="font-weight:700;font-size:0.95em;margin:10px 0 2px">${inline(h3[1])}</div>`); i++; continue }
+    if (h3) { closeList(); out.push(`<div style="font-weight:700;font-size:0.95em;margin:10px 0 2px">${inline(h3[1], sources)}</div>`); i++; continue }
     const h2 = line.match(/^##\s+(.+)/)
-    if (h2) { closeList(); out.push(`<div style="font-weight:700;font-size:1.05em;margin:12px 0 3px">${inline(h2[1])}</div>`); i++; continue }
+    if (h2) { closeList(); out.push(`<div style="font-weight:700;font-size:1.05em;margin:12px 0 3px">${inline(h2[1], sources)}</div>`); i++; continue }
     const h1 = line.match(/^#\s+(.+)/)
-    if (h1) { closeList(); out.push(`<div style="font-weight:700;font-size:1.15em;margin:14px 0 4px">${inline(h1[1])}</div>`); i++; continue }
+    if (h1) { closeList(); out.push(`<div style="font-weight:700;font-size:1.15em;margin:14px 0 4px">${inline(h1[1], sources)}</div>`); i++; continue }
 
     // Unordered list
     const ul = line.match(/^\s*[-*]\s+(.+)/)
     if (ul) {
       if (!inList || listTag !== 'ul') { closeList(); out.push('<ul style="margin:2px 0 2px 18px;padding:0">'); inList = true; listTag = 'ul' }
-      out.push(`<li style="margin:1px 0">${inline(ul[1])}</li>`); i++; continue
+      out.push(`<li style="margin:1px 0">${inline(ul[1], sources)}</li>`); i++; continue
     }
 
     // Ordered list
     const ol = line.match(/^\s*\d+[.)]\s+(.+)/)
     if (ol) {
       if (!inList || listTag !== 'ol') { closeList(); out.push('<ol style="margin:2px 0 2px 18px;padding:0">'); inList = true; listTag = 'ol' }
-      out.push(`<li style="margin:1px 0">${inline(ol[1])}</li>`); i++; continue
+      out.push(`<li style="margin:1px 0">${inline(ol[1], sources)}</li>`); i++; continue
     }
 
     // Horizontal rule
@@ -126,7 +146,7 @@ export default function renderMarkdown(text) {
 
     // Normal text
     closeList()
-    out.push(`<div>${inline(line)}</div>`)
+    out.push(`<div>${inline(line, sources)}</div>`)
     i++
   }
   closeList()

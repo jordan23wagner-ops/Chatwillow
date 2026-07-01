@@ -281,9 +281,9 @@ export default async function handler(req, res) {
       if (toolCall && toolCall.function.name === 'generate_image') {
         await runImageTool(toolCall, newMessage, NVIDIA_NIM_KEY, HUGGINGFACE_KEY, res, writeDelta)
       } else if (toolCall && toolCall.function.name === 'web_search') {
-        await runWebSearchTool(toolCall, newMessage, fullMessages, ids, OLLAMA_CLOUD_KEY, NVIDIA_NIM_KEY, TAVILY_KEY, writeDelta)
+        await runWebSearchTool(toolCall, newMessage, fullMessages, ids, OLLAMA_CLOUD_KEY, NVIDIA_NIM_KEY, TAVILY_KEY, res, writeDelta)
       }
-      if (searchData) writeDelta(sourcesMarkdown(searchData))
+      if (searchData) emitSources(res, searchData)
       writeDelta.flush()
       res.write(JSON.stringify({ done: true, provider: 'ollama', model: effectiveModel }) + '\n')
       return res.end()
@@ -304,7 +304,7 @@ export default async function handler(req, res) {
   if (NVIDIA_NIM_KEY && !state.wroteAny) {
     try {
       await streamNim(fullMessages, ids.nim, NVIDIA_NIM_KEY, writeDelta)
-      if (searchData) writeDelta(sourcesMarkdown(searchData))
+      if (searchData) emitSources(res, searchData)
       writeDelta.flush()
       res.write(JSON.stringify({ done: true, provider: 'nim', model: effectiveModel }) + '\n')
       return res.end()
@@ -417,12 +417,17 @@ function buildSearchSystem(query, search) {
   }
 }
 
-function sourcesMarkdown(search) {
-  if (!search.results.length) return ''
-  return (
-    '\n\n**Sources:**\n' +
-    search.results.map((r, i) => `${i + 1}. [${r.title}](${r.url})`).join('\n')
-  )
+// Emits sources as a structured NDJSON event (title+url only) instead of appending a
+// markdown list to the reply text. The frontend renders these as clickable inline
+// citation badges ([1], [2]...) plus a source-card row, Perplexity-style, rather than a
+// plain link list. Filtered to http(s) only — defense in depth even though Tavily should
+// only ever return those.
+function emitSources(res, search) {
+  const items = (search.results || [])
+    .filter((r) => r && r.url && /^https?:\/\//i.test(r.url))
+    .slice(0, 5)
+    .map((r) => ({ title: String(r.title || '').slice(0, 200), url: r.url }))
+  if (items.length) res.write(JSON.stringify({ sources: items }) + '\n')
 }
 
 // ---- Provider streamers ----
@@ -589,7 +594,7 @@ const WEB_SEARCH_TOOL = {
 // Runs when the model calls web_search in 'auto' mode. Announces the search (so the
 // user sees why there's a pause), fetches results, then re-asks the SAME model without
 // tools so it commits to a text answer grounded in them.
-async function runWebSearchTool(toolCall, fallbackPrompt, baseMessages, ids, ollamaKey, nimKey, tavilyKey, onDelta) {
+async function runWebSearchTool(toolCall, fallbackPrompt, baseMessages, ids, ollamaKey, nimKey, tavilyKey, res, onDelta) {
   let args = {}
   try { args = JSON.parse(toolCall.function.arguments || '{}') } catch { /* use fallback */ }
   const query = (args.query && String(args.query).trim()) || fallbackPrompt
@@ -602,7 +607,7 @@ async function runWebSearchTool(toolCall, fallbackPrompt, baseMessages, ids, oll
   else if (nimKey) await streamNim(messages, ids.nim, nimKey, onDelta)
   else throw new Error('no provider available for follow-up answer')
 
-  onDelta(sourcesMarkdown(search))
+  emitSources(res, search)
 }
 
 // Run a fetch with a hard deadline so a slow/hanging provider can't consume the whole

@@ -13,7 +13,10 @@ export const CHAT_DAILY_SOFT_LIMIT = 400
 // ceilings, not a capacity guarantee: the backend is one shared Ollama Cloud free-tier
 // key across every visitor, GPU-time-quota'd (not request-count-quota'd), so don't
 // surface PRO_DAILY_MESSAGE_LIMIT verbatim in UI copy — say "higher limit" instead.
-export const FREE_DAILY_MESSAGE_LIMIT = 50
+// FREE_DAILY_MESSAGE_LIMIT is deliberately generous (most free competitors are
+// effectively uncapped) — it exists as a last-resort circuit breaker for the shared
+// key, not as the actual usage-shaping mechanism, so it shouldn't feel like a wall.
+export const FREE_DAILY_MESSAGE_LIMIT = 150
 export const PRO_DAILY_MESSAGE_LIMIT = 2000
 
 // Returns the user's daily message allowance for their plan.

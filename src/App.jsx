@@ -9,7 +9,7 @@ import {
 } from './lib/conversations'
 import { loadUsage, bumpUsage, IMAGE_DAILY_SOFT_LIMIT, overMessageLimit, dailyMessageLimit, contextUsageRatio } from './lib/usage'
 import { exportWord, exportPdf, exportReplyWord, exportReplyPdf } from './lib/exportChat'
-import { Download, Mic, FileUp, Volume2, Square, Loader2, Copy, Check, RefreshCw, Pencil, Search } from 'lucide-react'
+import { Download, Mic, FileUp, Volume2, Square, Loader2, Copy, Check, RefreshCw, Pencil, Search, Headphones } from 'lucide-react'
 import renderMarkdown from './lib/renderMarkdown'
 import { parseDocument, isSupportedDocument } from './lib/parseDocument'
 import { THEMES, isDarkTheme } from './lib/themes'
@@ -38,6 +38,12 @@ const TOP_INSET = 'calc(env(safe-area-inset-top, 0px) + 0.75rem)'
 const BOTTOM_INSET = 'calc(env(safe-area-inset-bottom, 0px) + 1rem)'
 
 const MODEL_LABELS = { auto: 'Auto', m3: 'MiniMax M3', gemma: 'Gemma 4', gptoss: 'GPT-OSS 120B' }
+
+// Display hostname for a source-card link (e.g. "wikipedia.org"), falling back to the
+// raw url if it's malformed.
+function hostnameOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return String(url || '') }
+}
 
 export default function App() {
   // Load conversations once and derive the active id from the SAME instance — a fresh
@@ -73,6 +79,8 @@ export default function App() {
   const [error, setError] = useState(null)
   const [lastAttempt, setLastAttempt] = useState(null)
   const [listening, setListening] = useState(false)
+  const [voiceModeOpen, setVoiceModeOpen] = useState(false)
+  const [voiceState, setVoiceState] = useState('idle') // 'listening' | 'thinking' | 'speaking'
   const [doc, setDoc] = useState(null)          // { name, text, chars, truncated }
   const [docLoading, setDocLoading] = useState(false)
   const [speakingId, setSpeakingId] = useState(null) // id of the reply being read aloud
@@ -95,6 +103,10 @@ export default function App() {
   const docInputRef = useRef(null)
   const recognitionRef = useRef(null)
   const abortRef = useRef(null)                       // AbortController for the live stream
+  const voiceModeActiveRef = useRef(false)            // hands-free voice mode on/off
+  const voiceModeBusyRef = useRef(false)              // guards against overlapping rec.start() calls
+  const voiceModeRecRef = useRef(null)
+  const prevLoadingRef = useRef(false)                // detects the loading:true->false edge
 
   // Phase 7 — shareable links. If the app is opened with ?s=<id>, we render a read-only
   // snapshot instead of the live app (see the early return below).
@@ -118,7 +130,7 @@ export default function App() {
   // an upgrade nudge). Pro users are never blocked here.
   const blockedByLimit = () => {
     if (!isPro && overMessageLimit(usage, isPro)) {
-      setError(`You've reached the free daily limit of ${dailyMessageLimit(false)} messages. It resets at midnight — or upgrade to Pro in Settings for a higher limit.`)
+      setError(`You've sent a lot of messages today (${dailyMessageLimit(false)}+) — thanks for using FreeGPT so much! It resets at midnight, or upgrade to Pro in Settings for more headroom.`)
       return true
     }
     return false
@@ -366,6 +378,100 @@ export default function App() {
     window.speechSynthesis.speak(u)
   }
 
+  // ---- Hands-free voice mode ----
+  // A continuous listen -> send -> speak -> relisten loop built on the same Web Speech
+  // API primitives as mic-dictation and Listen-aloud above — no added server cost,
+  // consistent with the rest of the app's free-tier philosophy. Not as fluid as a
+  // dedicated streaming voice API, but zero marginal cost per turn.
+  const closeVoiceMode = () => {
+    voiceModeActiveRef.current = false
+    voiceModeBusyRef.current = false
+    setVoiceModeOpen(false)
+    setVoiceState('idle')
+    try { voiceModeRecRef.current?.stop() } catch { /* already stopped */ }
+    voiceModeRecRef.current = null
+    window.speechSynthesis?.cancel()
+  }
+
+  const voiceListen = () => {
+    if (!voiceModeActiveRef.current || voiceModeBusyRef.current) return
+    voiceModeBusyRef.current = true
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    const rec = new SR()
+    rec.lang = 'en-US'
+    rec.interimResults = false
+    rec.continuous = false
+    let gotResult = false
+    rec.onresult = (e) => {
+      gotResult = true
+      const transcript = (e.results[0]?.[0]?.transcript || '').trim()
+      if (!transcript) return
+      if (blockedByLimit()) { closeVoiceMode(); return }
+      setVoiceState('thinking')
+      sendText(transcript)
+    }
+    rec.onerror = (e) => {
+      // Permission problems can't self-resolve by retrying — exit with a clear message.
+      // 'no-speech'/'aborted' are routine in a hands-free loop and just retry via onend.
+      if (e.error === 'not-allowed' || e.error === 'audio-capture' || e.error === 'service-not-allowed') {
+        setError('Microphone access is blocked — allow it in your browser settings to use voice mode.')
+        closeVoiceMode()
+      }
+    }
+    rec.onend = () => {
+      voiceModeRecRef.current = null
+      voiceModeBusyRef.current = false
+      if (voiceModeActiveRef.current && !gotResult) setTimeout(voiceListen, 300)
+    }
+    voiceModeRecRef.current = rec
+    setVoiceState('listening')
+    rec.start()
+  }
+
+  // Reads a finished reply aloud, then loops back to listening — the "conversation" part
+  // of voice mode. Separate from speak() above (which targets one specific message id).
+  const speakVoiceMode = (text) => {
+    const clean = String(text || '')
+      .replace(/[#*`_>]/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .slice(0, 4000)
+    if (!clean.trim()) { voiceListen(); return }
+    setVoiceState('speaking')
+    window.speechSynthesis.cancel()
+    const u = new SpeechSynthesisUtterance(clean)
+    u.onend = () => { if (voiceModeActiveRef.current) voiceListen() }
+    u.onerror = () => { if (voiceModeActiveRef.current) voiceListen() }
+    window.speechSynthesis.speak(u)
+  }
+
+  // Tap-to-interrupt: stop the assistant mid-sentence and start listening immediately
+  // (barge-in), instead of waiting for the reply to finish reading.
+  const interruptSpeaking = () => {
+    window.speechSynthesis.cancel()
+    voiceListen()
+  }
+
+  const startVoiceMode = () => {
+    if (!speechSupported || !ttsSupported || loading) return
+    window.speechSynthesis.cancel()
+    setSpeakingId(null)
+    if (listening) recognitionRef.current?.stop()
+    voiceModeActiveRef.current = true
+    setVoiceModeOpen(true)
+    voiceListen()
+  }
+
+  // When a voice-mode turn finishes streaming, speak the reply; the speak->onend handler
+  // loops back to listening, so this is the only place that needs to watch for completion.
+  useEffect(() => {
+    if (voiceModeOpen && prevLoadingRef.current && !loading) {
+      const last = messages[messages.length - 1]
+      if (last && last.role === 'assistant' && last.content) speakVoiceMode(last.content)
+      else if (voiceModeActiveRef.current) voiceListen()
+    }
+    prevLoadingRef.current = loading
+  }, [loading, voiceModeOpen]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Document upload: parse client-side to text and attach it to the next message.
   const handleDocUpload = async (e) => {
     const file = e.target.files[0]
@@ -569,6 +675,15 @@ export default function App() {
       )
     }
 
+    // Web search sources: structured title+url list (not appended to the reply text),
+    // rendered as clickable inline citation badges + a source-card row.
+    const setAssistantSources = (sources) => {
+      ensureAssistant()
+      setMessages((prev) =>
+        prev.map((m) => (m.id === assistantId ? { ...m, sources } : m))
+      )
+    }
+
     const controller = new AbortController()
     abortRef.current = controller
 
@@ -613,9 +728,10 @@ export default function App() {
       }
 
       // Read the NDJSON stream: one JSON object per line.
-      //   { delta }  -> append token
-      //   { image }  -> AI-generated image
-      //   { done }   -> terminal success (carries routed provider/model)
+      //   { delta }   -> append token
+      //   { image }   -> AI-generated image
+      //   { sources } -> web search sources (title+url), rendered as citation badges
+      //   { done }    -> terminal success (carries routed provider/model)
       //   { error }  -> terminal failure
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
@@ -628,6 +744,7 @@ export default function App() {
         try { evt = JSON.parse(trimmed) } catch { return }
         if (evt.delta) appendDelta(evt.delta)
         else if (evt.image) setAssistantImage(evt.image, evt.mediaType)
+        else if (evt.sources) setAssistantSources(evt.sources)
         else if (evt.error) streamError = evt.error
         else if (evt.done) routedModel = evt.model || null
       }
@@ -1056,7 +1173,21 @@ export default function App() {
             <div className="flex items-center justify-center h-full text-center text-[var(--muted)]">
               <div>
                 <p className="text-lg mb-2">No messages yet</p>
-                <p className="text-sm">Start typing to begin a conversation</p>
+                <p className="text-sm mb-4">Start typing to begin a conversation</p>
+                <div className="flex flex-wrap justify-center gap-1.5 max-w-sm mx-auto text-xs">
+                  {[
+                    '🔎 Web search with sources',
+                    '🖼️ Free image generation',
+                    '🎙️ Hands-free voice mode',
+                    '🧠 Remembers you across chats',
+                    '📄 Export to Word & PDF',
+                    '🔒 No account needed',
+                  ].map((label) => (
+                    <span key={label} className="px-2.5 py-1 rounded-full bg-[var(--surface-2)] text-[var(--text)]">
+                      {label}
+                    </span>
+                  ))}
+                </div>
               </div>
             </div>
           ) : (
@@ -1108,9 +1239,31 @@ export default function App() {
                       </div>
                     )}
                     {msg.role === 'assistant' ? (
-                      <div className="text-sm prose-sm md-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
+                      <div className="text-sm prose-sm md-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content, msg.sources) }} />
                     ) : (
                       msg.content && <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                    )}
+                    {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
+                      <div className="flex gap-1.5 overflow-x-auto mt-2 pb-1 -mx-1 px-1">
+                        {msg.sources.map((s, i) => (
+                          <a
+                            key={i}
+                            href={s.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex items-center gap-1.5 shrink-0 max-w-[180px] px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-[11px] hover:opacity-80"
+                            title={s.title || s.url}
+                          >
+                            <img
+                              src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostnameOf(s.url))}&sz=32`}
+                              alt=""
+                              className="w-3.5 h-3.5 shrink-0 rounded-sm"
+                              onError={(e) => { e.currentTarget.style.display = 'none' }}
+                            />
+                            <span className="truncate">{s.title || hostnameOf(s.url)}</span>
+                          </a>
+                        ))}
+                      </div>
                     )}
                     {msg.role === 'assistant' && (msg.via || msg.cached) && (
                       <p className={`text-[10px] mt-1 ${darkMode ? 'text-gray-500' : 'text-gray-400'}`}>
@@ -1370,6 +1523,18 @@ export default function App() {
                 aria-label={listening ? 'Stop voice input' : 'Start voice input'}
               >
                 <Mic size={20} />
+              </button>
+            )}
+            {speechSupported && ttsSupported && (
+              <button
+                type="button"
+                onClick={startVoiceMode}
+                disabled={loading}
+                className="p-2 rounded-lg shrink-0 bg-[var(--surface-2)] text-[var(--text)] hover:opacity-80 disabled:opacity-50"
+                aria-label="Start hands-free voice mode"
+                title="Hands-free voice conversation"
+              >
+                <Headphones size={20} />
               </button>
             )}
             <input
@@ -1733,6 +1898,44 @@ export default function App() {
                 </>
               )}
             </div>
+          </div>
+        )}
+
+        {/* Hands-free voice mode — full-screen "call" overlay */}
+        {voiceModeOpen && (
+          <div
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 text-white p-6"
+            onClick={() => { if (voiceState === 'speaking') interruptSpeaking() }}
+          >
+            <button
+              onClick={(e) => { e.stopPropagation(); closeVoiceMode() }}
+              className="absolute top-4 right-4 p-2 rounded-full bg-white/10 hover:bg-white/20"
+              aria-label="Exit voice mode"
+            >
+              <X size={22} />
+            </button>
+            <div
+              className={`w-32 h-32 rounded-full flex items-center justify-center mb-6 transition-colors ${
+                voiceState === 'listening' ? 'bg-[var(--accent)] animate-pulse'
+                : voiceState === 'speaking' ? 'bg-green-600 animate-pulse'
+                : 'bg-white/15'
+              }`}
+            >
+              {voiceState === 'thinking' ? (
+                <Loader2 size={40} className="animate-spin" />
+              ) : voiceState === 'speaking' ? (
+                <Volume2 size={40} />
+              ) : (
+                <Mic size={40} />
+              )}
+            </div>
+            <p className="text-lg font-medium mb-1">
+              {voiceState === 'listening' ? 'Listening…'
+                : voiceState === 'thinking' ? 'Thinking…'
+                : voiceState === 'speaking' ? 'Speaking — tap to interrupt'
+                : 'Voice mode'}
+            </p>
+            <p className="text-sm text-white/50">Tap the X to exit</p>
           </div>
         )}
       </div>

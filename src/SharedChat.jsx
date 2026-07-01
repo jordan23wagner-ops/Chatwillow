@@ -3,6 +3,12 @@ import { MessageSquare, ExternalLink, ImageIcon, FileUp } from 'lucide-react'
 import renderMarkdown from './lib/renderMarkdown'
 import { enhanceMessages } from './lib/enhanceMessages'
 
+// Display hostname for a source-card link (e.g. "wikipedia.org"), falling back to the
+// raw url if it's malformed.
+function hostnameOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, '') } catch { return String(url || '') }
+}
+
 // Phase 7 — read-only viewer for a shared conversation snapshot. Rendered when the app
 // loads with ?s=<id>. No composer, no sidebar, no keys — just the frozen messages, with
 // the same markdown/code/math rendering as the live chat.
@@ -63,9 +69,31 @@ export default function SharedChat({ chat, loading, notFound }) {
                   </div>
                 )}
                 {msg.role === 'assistant' ? (
-                  <div className="text-sm prose-sm md-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
+                  <div className="text-sm prose-sm md-body" dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content, msg.sources) }} />
                 ) : (
                   msg.content && <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+                )}
+                {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && (
+                  <div className="flex gap-1.5 overflow-x-auto mt-2 pb-1 -mx-1 px-1">
+                    {msg.sources.map((s, i) => (
+                      <a
+                        key={i}
+                        href={s.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 shrink-0 max-w-[180px] px-2 py-1 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-[11px] hover:opacity-80"
+                        title={s.title || s.url}
+                      >
+                        <img
+                          src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(hostnameOf(s.url))}&sz=32`}
+                          alt=""
+                          className="w-3.5 h-3.5 shrink-0 rounded-sm"
+                          onError={(e) => { e.currentTarget.style.display = 'none' }}
+                        />
+                        <span className="truncate">{s.title || hostnameOf(s.url)}</span>
+                      </a>
+                    ))}
+                  </div>
                 )}
               </div>
             </div>
