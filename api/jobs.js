@@ -26,7 +26,12 @@ export default async function handler(req, res) {
   const APP_ID = process.env.ADZUNA_APP_ID;
   const APP_KEY = process.env.ADZUNA_APP_KEY;
   if (!APP_ID || !APP_KEY) {
-    return res.status(500).json({ error: 'Job search is not configured yet (set ADZUNA_APP_ID and ADZUNA_APP_KEY in the backend environment).' });
+    // `have` reports only presence (booleans, never the values) to pinpoint a wrong project,
+    // wrong scope, or a name typo without leaking secrets.
+    return res.status(500).json({
+      error: 'Job search is not configured yet (set ADZUNA_APP_ID and ADZUNA_APP_KEY in the backend environment).',
+      have: { ADZUNA_APP_ID: !!APP_ID, ADZUNA_APP_KEY: !!APP_KEY }
+    });
   }
 
   const body = req.body || {};
