@@ -41,9 +41,13 @@ export default async function handler(req, res) {
 
     let customerId = existing?.stripe_customer_id
     if (!customerId) {
+      // fp_uid is the key FirstPromoter matches a Stripe customer back to a
+      // referral with (customer email is its fallback). We already have both,
+      // so referral attribution works with no extra bookkeeping. This is inert
+      // if FirstPromoter is never enabled -- just an unused metadata key.
       const customer = await stripe.customers.create({
         email: user.email,
-        metadata: { supabase_user_id: user.id },
+        metadata: { supabase_user_id: user.id, fp_uid: user.id },
       })
       customerId = customer.id
       await supabaseAdmin
