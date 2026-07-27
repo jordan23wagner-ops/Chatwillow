@@ -145,3 +145,9 @@ Serverless functions under `/api` require the environment variables above (use `
 ## License
 
 Personal project. Not affiliated with OpenAI, Anthropic, or any AI provider whose models it calls.
+
+
+## Recent changes (2026-07-27)
+
+- **Referral tracking added.** Stripe customer metadata now carries `fp_uid` (matches on customer email as fallback) and a client helper (`src/lib/firstpromoter.js`) loads the FirstPromoter tracking script and reports signups. Inert until `VITE_FIRSTPROMOTER_ID` is set — safe to ship ahead of the account.
+- 
