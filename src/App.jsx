@@ -29,6 +29,7 @@ import { createShare, loadShare, shareUrl, shareIdFromUrl, listShares, deleteSha
 import { Settings, Brain, Trash, LogIn, LogOut, Mail, Crown } from 'lucide-react'
 import { supabase, hasSupabase } from './lib/supabase'
 import { initAuth, onAuthChange, signInWithEmail, signInWithGoogle, signOut } from './lib/auth'
+import { trackSignup } from './lib/firstpromoter'
 import { syncConversationsDown, syncConversationUp, syncDeleteConversation } from './lib/sync'
 import { startCheckout, openBillingPortal, fetchMySubscription, isProPlan } from './lib/billing'
 import { Analytics } from '@vercel/analytics/react'
@@ -148,7 +149,16 @@ export default function App() {
   useEffect(() => {
     if (!hasSupabase) return
     initAuth().then(setAuthUser)
-    return onAuthChange(setAuthUser)
+    return onAuthChange((user) => {
+      setAuthUser(user)
+      if (user) {
+        const key = `fp_tracked_${user.id}`
+        if (!localStorage.getItem(key)) {
+          trackSignup(user)
+          localStorage.setItem(key, '1')
+        }
+      }
+    })
   }, [])
 
   useEffect(() => {
