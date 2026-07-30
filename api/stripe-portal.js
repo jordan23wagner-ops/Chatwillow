@@ -17,18 +17,20 @@ export default async function handler(req, res) {
   const { data: userData, error: userErr } = await supabaseAdmin.auth.getUser(token)
   if (userErr || !userData?.user) return res.status(401).json({ error: 'Sign in required.' })
 
-  const { data: sub } = await supabaseAdmin
-    .from('subscriptions')
+  // Product-agnostic — same Stripe Customer, and Stripe's portal already lists every
+  // subscription (Chatwillow, Alicia, or both) that customer holds in one place.
+  const { data: cust } = await supabaseAdmin
+    .from('stripe_customers')
     .select('stripe_customer_id')
     .eq('user_id', userData.user.id)
     .maybeSingle()
 
-  if (!sub?.stripe_customer_id) return res.status(400).json({ error: 'No billing account yet — upgrade first.' })
+  if (!cust?.stripe_customer_id) return res.status(400).json({ error: 'No billing account yet — upgrade first.' })
 
   const origin = req.headers.origin || `https://${req.headers.host}`
   try {
     const portal = await stripe.billingPortal.sessions.create({
-      customer: sub.stripe_customer_id,
+      customer: cust.stripe_customer_id,
       return_url: origin,
     })
     res.status(200).json({ url: portal.url })

@@ -155,3 +155,116 @@ as $$
     set seconds = global_usage.seconds + excluded.seconds,
         updated_at = excluded.updated_at;
 $$;
+
+-- ───────────────────────── Per-product subscriptions (Alicia monetization) ─────────────────────────
+-- The original `subscriptions` table (above) is PRIMARY KEY(user_id) with a single `plan`
+-- field, so it can only represent ONE product's entitlement per user — a second product's
+-- webhook silently overwrites the first. Superseded by the two tables below, which split
+-- the product-agnostic Stripe customer identity from the per-product entitlement. The old
+-- `subscriptions` table is left in place (unused by new code) as a rollback window; do not
+-- write to it going forward.
+
+-- One row per Supabase user, product-agnostic. Same Stripe Customer object is reused
+-- across every product a user buys (see api/stripe-checkout.js).
+create table if not exists stripe_customers (
+  user_id uuid primary key references auth.users (id) on delete cascade,
+  stripe_customer_id text not null unique,
+  created_at bigint not null default 0
+);
+alter table stripe_customers enable row level security;
+-- No client policies — service role only (matches usage_ledger's pattern above).
+
+-- One row per (user_id, product). product = 'chatwillow' | 'alicia'. Written by
+-- api/stripe-webhook.js; read by account.js (Alicia) with product=eq.alicia and by the
+-- Chatwillow web app (product=eq.chatwillow) via the owner-read policy below.
+create table if not exists subscriptions_v2 (
+  user_id uuid not null references auth.users (id) on delete cascade,
+  product text not null,
+  plan text not null default 'free',
+  status text,
+  current_period_end bigint,
+  updated_at bigint not null default 0,
+  primary key (user_id, product)
+);
+create index if not exists subscriptions_v2_user_idx on subscriptions_v2 (user_id);
+alter table subscriptions_v2 enable row level security;
+create policy "own_subscriptions_v2_read" on subscriptions_v2
+  for select using (auth.uid() = user_id);
+
+-- ───────────────────────── Alicia free-tier usage caps ─────────────────────────
+-- Monthly per-feature counters for Job-Assistant's metered features (LinkedIn scan/rank,
+-- résumé tailoring). Distinct from usage_ledger above: this is COUNT-based and resets on
+-- the calendar month, not generation-time-based and daily. Checked/incremented only via
+-- api/usage-check.js (service role), never queried directly by the extension.
+create table if not exists usage_counters (
+  user_id uuid not null references auth.users (id) on delete cascade,
+  feature text not null,           -- 'scan' | 'tailor'
+  period_start date not null,      -- first day of the calendar month
+  count int not null default 0,
+  updated_at bigint not null default 0,
+  primary key (user_id, feature, period_start)
+);
+alter table usage_counters enable row level security;
+-- No client policies — service role only.
+
+-- Per-user burst/concurrency lock: prevents more than one scan/tailor request in flight
+-- at once per user. Acquired by api/usage-check.js, released by api/usage-release.js
+-- (or self-clears via the 90s staleness check on the next acquire attempt).
+create table if not exists in_flight_requests (
+  user_id uuid not null,
+  feature text not null,
+  started_at bigint not null,
+  primary key (user_id, feature)
+);
+alter table in_flight_requests enable row level security;
+-- No client policies — service role only.
+
+-- Atomically checks the free-tier cap and increments if allowed. p_limit <= 0 means
+-- unlimited (Pro). SECURITY DEFINER so it can write despite RLS locking out clients —
+-- EXECUTE is revoked from anon/authenticated below so only api/usage-check.js's
+-- service-role client can call it (unlike record_usage above, which is left open to
+-- those roles as a pre-existing condition, out of scope for this change).
+create or replace function check_and_increment_usage(
+  p_user_id uuid, p_feature text, p_period_start date, p_limit int
+) returns table (allowed boolean, count int)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare v_count int;
+begin
+  insert into usage_counters (user_id, feature, period_start, count, updated_at)
+  values (p_user_id, p_feature, p_period_start, 0, 0)
+  on conflict (user_id, feature, period_start) do nothing;
+
+  select uc.count into v_count from usage_counters uc
+    where uc.user_id = p_user_id and uc.feature = p_feature and uc.period_start = p_period_start
+    for update;
+
+  if p_limit > 0 and v_count >= p_limit then
+    return query select false, v_count;
+    return;
+  end if;
+
+  update usage_counters uc set count = uc.count + 1, updated_at = (extract(epoch from now())*1000)::bigint
+    where uc.user_id = p_user_id and uc.feature = p_feature and uc.period_start = p_period_start
+    returning uc.count into v_count;
+
+  return query select true, v_count;
+end;
+$$;
+
+revoke execute on function check_and_increment_usage(uuid, text, date, int) from public, anon, authenticated;
+grant execute on function check_and_increment_usage(uuid, text, date, int) to service_role;
+
+-- One-time backfill from the old subscriptions table (already applied to the live
+-- project; kept here so a fresh environment can reproduce this setup from scratch).
+insert into stripe_customers (user_id, stripe_customer_id, created_at)
+  select user_id, stripe_customer_id, updated_at from subscriptions
+  where stripe_customer_id is not null
+  on conflict (user_id) do nothing;
+
+insert into subscriptions_v2 (user_id, product, plan, status, current_period_end, updated_at)
+  select user_id, 'chatwillow', plan, status, current_period_end, updated_at from subscriptions
+  where plan is not null
+  on conflict (user_id, product) do nothing;

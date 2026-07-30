@@ -32,9 +32,11 @@ export default async function handler(req, res) {
   const origin = /^https?:\/\//i.test(rawOrigin) ? rawOrigin : 'https://chatwillow.com'
 
   try {
-    // Reuse the Stripe customer we already created for this user, if any.
+    // Reuse the Stripe customer we already created for this user, if any — product-
+    // agnostic, so a user buying their second product (Chatwillow or Alicia) still
+    // lands on the same Stripe Customer object instead of creating a duplicate.
     const { data: existing } = await supabaseAdmin
-      .from('subscriptions')
+      .from('stripe_customers')
       .select('stripe_customer_id')
       .eq('user_id', user.id)
       .maybeSingle()
@@ -47,8 +49,8 @@ export default async function handler(req, res) {
       })
       customerId = customer.id
       await supabaseAdmin
-        .from('subscriptions')
-        .upsert({ user_id: user.id, stripe_customer_id: customerId, updated_at: Date.now() }, { onConflict: 'user_id' })
+        .from('stripe_customers')
+        .upsert({ user_id: user.id, stripe_customer_id: customerId, created_at: Date.now() }, { onConflict: 'user_id' })
     }
 
     const session = await stripe.checkout.sessions.create({

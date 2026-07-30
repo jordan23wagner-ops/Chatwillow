@@ -22,7 +22,7 @@ function readRawBody(req) {
 
 async function lookupUserByCustomer(customerId) {
   const { data } = await supabaseAdmin
-    .from('subscriptions')
+    .from('stripe_customers')
     .select('user_id')
     .eq('stripe_customer_id', customerId)
     .maybeSingle()
@@ -35,20 +35,22 @@ async function upsertFromSubscription(sub) {
     console.error('Webhook: no Supabase user for Stripe subscription', sub.id)
     return
   }
-  // Which product this subscription is for: 'alicia' (Job-Assistant Pro) writes plan
-  // 'alicia_pro'; anything else is Chatwillow Pro. The chat quota gate accepts both.
-  const activePlan = sub.metadata?.product === 'alicia' ? 'alicia_pro' : 'pro'
+  // Which product this subscription is for: 'alicia' (Job-Assistant Pro) or
+  // 'chatwillow'. One row per (user_id, product) — buying one product never touches
+  // the other's row, unlike the old single-row-per-user subscriptions table.
+  const product = sub.metadata?.product === 'alicia' ? 'alicia' : 'chatwillow'
+  const activePlan = product === 'alicia' ? 'alicia_pro' : 'pro'
   const plan = ['active', 'trialing'].includes(sub.status) ? activePlan : 'free'
-  await supabaseAdmin.from('subscriptions').upsert(
+  await supabaseAdmin.from('subscriptions_v2').upsert(
     {
       user_id: userId,
+      product,
       plan,
       status: sub.status,
-      stripe_customer_id: sub.customer,
       current_period_end: sub.current_period_end ? sub.current_period_end * 1000 : null,
       updated_at: Date.now(),
     },
-    { onConflict: 'user_id' }
+    { onConflict: 'user_id,product' }
   )
 }
 
