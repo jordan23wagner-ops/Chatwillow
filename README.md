@@ -117,7 +117,8 @@ The Supabase project URL + **publishable anon key** are embedded in the frontend
 | Variable | Required | Purpose |
 |---|---|---|
 | `STRIPE_SECRET_KEY` | For Pro | Stripe API (use a live key in production) |
-| `STRIPE_PRICE_ID` | For Pro | The $5/mo recurring price ID |
+| `STRIPE_PRICE_ID` | For Pro | Chatwillow Pro's $5/mo recurring price ID |
+| `STRIPE_ALICIA_PRICE_ID` | For Alicia Pro | Alicia Pro's (Job-Assistant) $10/mo recurring price ID — a separate product/price from Chatwillow Pro, checkout opened from the extension, see `api/stripe-checkout.js` |
 | `STRIPE_WEBHOOK_SECRET` | For Pro | Verifies incoming Stripe webhook signatures |
 
 **Quota caps (optional — all have sane defaults)**

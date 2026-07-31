@@ -112,14 +112,14 @@ async function resolveIdentity(req, supabaseAdmin) {
       if (!error && data?.user) {
         let isPro = false
         try {
-          const { data: sub } = await supabaseAdmin
-            .from('subscriptions')
+          const { data: subs } = await supabaseAdmin
+            .from('subscriptions_v2')
             .select('plan, status')
             .eq('user_id', data.user.id)
-            .maybeSingle()
-          // 'pro' = Chatwillow Pro, 'alicia_pro' = Job-Assistant (Alicia) Pro. Both draw
-          // from the same shared GPU budget, so both get the Pro daily cap here.
-          isPro = !!sub && (sub.plan === 'pro' || sub.plan === 'alicia_pro') && (sub.status === 'active' || sub.status === 'trialing')
+          // Chatwillow Pro and Alicia (Job-Assistant) Pro are billed independently
+          // (subscriptions_v2 has one row per product), but both draw from the same
+          // shared GPU budget, so either one grants the Pro daily chat cap here.
+          isPro = !!subs && subs.some((sub) => (sub.plan === 'pro' || sub.plan === 'alicia_pro') && (sub.status === 'active' || sub.status === 'trialing'))
         } catch { /* treat as free on lookup failure */ }
         return { identity: `user:${data.user.id}`, cap: isPro ? PRO_DAILY_SECONDS_CAP : FREE_DAILY_SECONDS_CAP }
       }

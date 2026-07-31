@@ -28,11 +28,17 @@ export async function openBillingPortal() {
   window.location.href = url
 }
 
-// The signed-in user's own subscription row — RLS scopes this to auth.uid(), so no
-// explicit user_id filter is needed (or possible to bypass) from the client.
+// The signed-in user's own Chatwillow subscription row — RLS scopes this to auth.uid(),
+// so no explicit user_id filter is needed (or possible to bypass) from the client.
+// subscriptions_v2 holds one row per (user, product); Chatwillow Pro and Alicia Pro
+// (Job-Assistant) are billed independently, so this filters to the 'chatwillow' row.
 export async function fetchMySubscription() {
   if (!hasSupabase) return null
-  const { data } = await supabase.from('subscriptions').select('plan, status, current_period_end').maybeSingle()
+  const { data } = await supabase
+    .from('subscriptions_v2')
+    .select('plan, status, current_period_end')
+    .eq('product', 'chatwillow')
+    .maybeSingle()
   return data || null
 }
 
