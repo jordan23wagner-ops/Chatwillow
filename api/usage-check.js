@@ -85,7 +85,7 @@ export default async function handler(req, res) {
     if (!row.allowed) {
       await releaseLock(userId, feature)
       return res.status(429).json({
-        error: `You've used all ${FREE_LIMITS[feature]} free ${FEATURE_LABEL[feature]} this month. Upgrade to Alicia Pro in Tools → Account for unlimited.`,
+        error: `You've used all ${FREE_LIMITS[feature]} free ${FEATURE_LABEL[feature]} this month. Upgrade to Alicia Pro ($10/mo) in Tools → Account for unlimited.`,
         upgrade: true,
       })
     }

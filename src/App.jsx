@@ -1785,6 +1785,9 @@ export default function App() {
                         >
                           {billingBusy ? 'Redirecting…' : 'Upgrade to Pro — $5/mo'}
                         </button>
+                        <p className="text-xs text-[var(--muted)] mt-1">
+                          Billed securely via Stripe — appears as <strong>VESSA CHATWILLOW</strong> on your card statement.
+                        </p>
                       </>
                     )}
                     {billingMsg && <p className="text-xs text-red-500 mt-2">{billingMsg}</p>}

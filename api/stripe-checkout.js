@@ -1,6 +1,7 @@
-// Starts a Stripe Checkout session for the $5/mo Pro plan. The caller must be
-// signed in (Supabase access token in the Authorization header) so we know which
-// user to attach the Stripe customer/subscription to.
+// Starts a Stripe Checkout session for a Pro plan — Chatwillow Pro ($5/mo) or Alicia
+// Pro ($10/mo, Job-Assistant), selected by `product` in the request body. The caller
+// must be signed in (Supabase access token in the Authorization header) so we know
+// which user to attach the Stripe customer/subscription to.
 
 import Stripe from 'stripe'
 import { createClient } from '@supabase/supabase-js'
